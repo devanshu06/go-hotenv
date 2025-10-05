@@ -6,7 +6,7 @@ This example shows how to ship the `hotenv` sample service from [`main.go`](./ma
 
 ## Prerequisites
 
-- Go 1.21+ (for local builds) and Docker.
+- Go 1.25+ (for local builds) and Docker.
 - Access to a container registry (Docker Hub, GHCR, ECR, etc.).
 - A Kubernetes cluster with kubectl configured.
 - External Secrets Operator installed in the cluster.

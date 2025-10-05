@@ -1,4 +1,4 @@
-module go-hotenv
+module example
 
 go 1.25.0
 
