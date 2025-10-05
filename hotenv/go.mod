@@ -1,4 +1,4 @@
-module hotenv
+module github.com/devanshu06/go-hotenv/hotenv
 
 go 1.25.0
 
