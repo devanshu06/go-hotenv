@@ -1,0 +1,147 @@
+# ------------------------------------------------------------
+# (1) Namespace (optional; change or remove if using "default")
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+---
+# ------------------------------------------------------------
+# (2) Doppler Service Token stored as a Kubernetes Secret
+#     Replace: DOPPLER_TOKEN_VALUE
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: doppler-service-token
+  namespace: demo
+type: Opaque
+stringData:
+  token: <DOPPLER_TOKEN>
+---
+# ------------------------------------------------------------
+# (3) ESO SecretStore for Doppler
+#     Replace: project, config to match your Doppler setup
+# ------------------------------------------------------------
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: doppler
+  namespace: demo
+spec:
+  provider:
+    doppler:
+      auth:
+        secretRef:
+          dopplerToken:
+            name: doppler-service-token
+            key: token
+      project: <DOPPLER_PROJECT>         # <-- Doppler project name
+      config: <DOPPLER_CONFIG>           # <-- Doppler config (e.g., dev/stage/prod)
+---
+# ------------------------------------------------------------
+# (4) ExternalSecret: pull ALL keys from Doppler and
+#     render them into a single key called "envfile"
+# ------------------------------------------------------------
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: app-secrets
+  namespace: demo
+spec:
+  refreshInterval: 30s             # how often ESO polls Doppler
+  secretStoreRef:
+    name: doppler
+    kind: SecretStore
+  # Pull all keys from Doppler config
+  dataFrom:
+    - find:
+        name:
+          regexp: ".*"                 # empty "find" => include all keys
+  target:
+    name: app-secrets              # native K8s Secret ESO will create/update
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      # turn all individual keys into a single .env-style file
+      data:
+        envfile: |-
+          {{- /* Render each k=v on its own line, preserving newlines in values via single quotes */ -}}
+          {{- range $k, $v := . -}}
+          {{ printf "%s='%s'\n" $k $v }}
+          {{- end -}}
+---
+# ------------------------------------------------------------
+# (5) Deployment: Go app listening on 8080
+#     - mounts the Secret as /secrets/.env
+#     - sets SECRETS_FILE so your watcher reads the right path
+# ------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-app
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-app
+  template:
+    metadata:
+      labels:
+        app: hello-app
+    spec:
+      containers:
+        - name: app
+          # Replace with your built image
+          image: dev06/go-service:v5
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SECRETS_FILE
+              value: /app/secrets/.env
+            # keep PORT optional for local runs; app defaults to 8080 anyway
+            - name: PORT
+              value: "8080"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: app-secrets
+              mountPath: /app/secrets
+              readOnly: true
+      volumes:
+        - name: app-secrets
+          secret:
+            secretName: app-secrets
+            # Mount the single key "envfile" as ".env"
+            items:
+              - key: envfile
+                path: .env
+---
+# ------------------------------------------------------------
+# (6) Service: ClusterIP on port 80 -> Pod 8080
+# ------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-app
+  namespace: demo
+spec:
+  type: ClusterIP
+  selector:
+    app: hello-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
